@@ -255,6 +255,162 @@ function Header({ view, setView, streak, log, user, onLogout, saveStatus }) {
   );
 }
 
+// ===== インターバルタイマー =====
+let audioCtx = null;
+const ensureAudio = () => {
+  if (!audioCtx) {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (Ctx) audioCtx = new Ctx();
+  }
+  if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+  return audioCtx;
+};
+
+const playWhistle = (pattern = 'single') => {
+  const ctx = ensureAudio();
+  if (!ctx) return;
+  const beeps = pattern === 'double' ? [[0, 0.18], [0.28, 0.18]]
+                : pattern === 'long' ? [[0, 0.5]]
+                : [[0, 0.2]];
+  beeps.forEach(([offset, dur]) => {
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(1760, ctx.currentTime + offset); // A6
+    gain.gain.setValueAtTime(0, ctx.currentTime + offset);
+    gain.gain.linearRampToValueAtTime(0.25, ctx.currentTime + offset + 0.01);
+    gain.gain.linearRampToValueAtTime(0.25, ctx.currentTime + offset + dur - 0.05);
+    gain.gain.linearRampToValueAtTime(0, ctx.currentTime + offset + dur);
+    osc.connect(gain).connect(ctx.destination);
+    osc.start(ctx.currentTime + offset);
+    osc.stop(ctx.currentTime + offset + dur);
+  });
+};
+
+const TIMER_SETTINGS_KEY = 'timer-settings-v1';
+const loadTimerSettings = () => {
+  try {
+    const raw = localStorage.getItem(TIMER_SETTINGS_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch {}
+  return { setSec: 60, restSec: 180 };
+};
+const saveTimerSettings = (s) => {
+  try { localStorage.setItem(TIMER_SETTINGS_KEY, JSON.stringify(s)); } catch {}
+};
+
+function IntervalTimer() {
+  const [settings, setSettings] = useState(loadTimerSettings);
+  const [phase, setPhase] = useState('idle'); // 'idle' | 'set' | 'rest'
+  const [remaining, setRemaining] = useState(0);
+  const [setCount, setSetCount] = useState(0);
+  const [showSettings, setShowSettings] = useState(false);
+
+  useEffect(() => { saveTimerSettings(settings); }, [settings]);
+
+  // メインのカウントダウンループ
+  useEffect(() => {
+    if (phase === 'idle') return;
+    const interval = setInterval(() => {
+      setRemaining((prev) => {
+        const next = prev - 1;
+        // インターバル30秒前
+        if (phase === 'rest' && next === 30) {
+          playWhistle('single');
+        }
+        if (next <= 0) {
+          // フェーズ移行
+          if (phase === 'set') {
+            playWhistle('long'); // セット終了 = インターバル開始
+            setPhase('rest');
+            return settings.restSec;
+          } else {
+            playWhistle('double'); // インターバル終了 = 次セット開始
+            setSetCount((c) => c + 1);
+            setPhase('set');
+            return settings.setSec;
+          }
+        }
+        return next;
+      });
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [phase, settings.setSec, settings.restSec]);
+
+  const handleStart = () => {
+    ensureAudio();
+    playWhistle('double'); // 開始の合図
+    setPhase('set');
+    setRemaining(settings.setSec);
+    setSetCount(1);
+  };
+  const handleStop = () => {
+    setPhase('idle');
+    setRemaining(0);
+    setSetCount(0);
+  };
+  const handleSkip = () => {
+    if (phase === 'set') { playWhistle('long'); setPhase('rest'); setRemaining(settings.restSec); }
+    else if (phase === 'rest') { playWhistle('double'); setSetCount((c) => c + 1); setPhase('set'); setRemaining(settings.setSec); }
+  };
+
+  const fmt = (sec) => {
+    const m = Math.floor(sec / 60), s = sec % 60;
+    return `${m}:${String(s).padStart(2, '0')}`;
+  };
+
+  const phaseColor = phase === 'set' ? '#c0392b' : phase === 'rest' ? '#3d7a4f' : '#3a3a3a';
+  const phaseLabel = phase === 'set' ? `SET ${setCount}` : phase === 'rest' ? 'REST' : 'TIMER';
+  const phaseSub = phase === 'set' ? 'トレーニング中' : phase === 'rest' ? 'インターバル' : '待機中';
+
+  return e('div', { style: { ...styles.timerWrap, borderColor: phaseColor } },
+    e('div', { style: styles.timerHeader },
+      e('div', null,
+        e('div', { style: { ...styles.timerPhaseLabel, color: phaseColor } }, phaseLabel),
+        e('div', { style: styles.timerPhaseSub }, phaseSub)
+      ),
+      e('button', { onClick: () => setShowSettings(!showSettings), style: styles.timerGearBtn }, showSettings ? '×' : '⚙')
+    ),
+    showSettings
+      ? e('div', { style: styles.timerSettings },
+          e('div', { style: styles.timerSettingRow },
+            e('label', { style: styles.timerSettingLabel }, 'セット時間（秒）'),
+            e('input', {
+              type: 'number', min: 5, max: 600, step: 5,
+              value: settings.setSec,
+              onChange: (ev) => setSettings({ ...settings, setSec: Math.max(5, parseInt(ev.target.value) || 60) }),
+              disabled: phase !== 'idle',
+              style: styles.timerSettingInput
+            })
+          ),
+          e('div', { style: styles.timerSettingRow },
+            e('label', { style: styles.timerSettingLabel }, 'インターバル（秒）'),
+            e('input', {
+              type: 'number', min: 5, max: 600, step: 5,
+              value: settings.restSec,
+              onChange: (ev) => setSettings({ ...settings, restSec: Math.max(5, parseInt(ev.target.value) || 180) }),
+              disabled: phase !== 'idle',
+              style: styles.timerSettingInput
+            })
+          ),
+          phase !== 'idle' && e('div', { style: styles.timerSettingNote }, '※ 動作中は変更できません')
+        )
+      : e(React.Fragment, null,
+          e('div', { style: { ...styles.timerDisplay, color: phase === 'idle' ? '#666' : '#f4f0e6' } },
+            phase === 'idle' ? `${fmt(settings.setSec)} / ${fmt(settings.restSec)}` : fmt(remaining)
+          ),
+          e('div', { style: styles.timerControls },
+            phase === 'idle'
+              ? e('button', { onClick: handleStart, style: { ...styles.timerBtn, ...styles.timerBtnPrimary } }, '▶ スタート')
+              : e(React.Fragment, null,
+                  e('button', { onClick: handleSkip, style: styles.timerBtn }, '⏭ スキップ'),
+                  e('button', { onClick: handleStop, style: { ...styles.timerBtn, ...styles.timerBtnDanger } }, '■ 停止')
+                )
+          )
+        )
+  );
+}
+
 function TodayView({ selectedDate, setSelectedDate, log, updateEntry }) {
   const date = parseYMD(selectedDate);
   const dow = date.getDay();
@@ -305,6 +461,7 @@ function TodayView({ selectedDate, setSelectedDate, log, updateEntry }) {
           e('div', { style: styles.restSub }, '回復もトレーニングのうち')
         )
       : e(React.Fragment, null,
+          e(IntervalTimer, null),
           e('div', { style: { ...styles.partBanner, borderLeftColor: part.color } },
             e('div', { style: { ...styles.partKanji, color: part.color } }, part.jp),
             e('div', null,
@@ -732,6 +889,23 @@ const styles = {
   emptyProgress: { padding: '50px 20px', textAlign: 'center', background: '#141414', border: '1px dashed #2a2a2a', borderRadius: 2, color: '#888' },
   emptyText: { fontSize: 14, color: '#aaa', letterSpacing: '0.1em', marginBottom: 6 },
   emptySub: { fontSize: 12, color: '#666' },
+
+  // インターバルタイマー
+  timerWrap: { background: '#141414', border: '2px solid #3a3a3a', borderRadius: 4, padding: '14px 18px', transition: 'border-color 0.3s' },
+  timerHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
+  timerPhaseLabel: { fontFamily: 'monospace', fontSize: 13, fontWeight: 700, letterSpacing: '0.25em', transition: 'color 0.3s' },
+  timerPhaseSub: { fontSize: 11, color: '#888', marginTop: 2, letterSpacing: '0.1em' },
+  timerGearBtn: { background: 'transparent', border: '1px solid #2a2a2a', color: '#888', width: 28, height: 28, borderRadius: 2, fontSize: 14, display: 'flex', alignItems: 'center', justifyContent: 'center' },
+  timerDisplay: { fontFamily: 'monospace', fontSize: 56, fontWeight: 700, textAlign: 'center', letterSpacing: '0.05em', padding: '8px 0', transition: 'color 0.3s', lineHeight: 1.1 },
+  timerControls: { display: 'flex', gap: 10, justifyContent: 'center', marginTop: 10 },
+  timerBtn: { background: '#1a1a1a', border: '1px solid #2a2a2a', color: '#e8e3d8', padding: '10px 20px', fontSize: 13, borderRadius: 2, letterSpacing: '0.1em', minWidth: 100 },
+  timerBtnPrimary: { background: '#c0392b', border: '1px solid #c0392b', color: '#f4f0e6', fontWeight: 500 },
+  timerBtnDanger: { color: '#e8a8a0' },
+  timerSettings: { display: 'flex', flexDirection: 'column', gap: 10, padding: '8px 0' },
+  timerSettingRow: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
+  timerSettingLabel: { fontSize: 13, color: '#aaa' },
+  timerSettingInput: { background: '#0e0e0e', border: '1px solid #2a2a2a', color: '#f4f0e6', padding: '7px 10px', fontSize: 13, fontFamily: 'monospace', width: 100, borderRadius: 2, outline: 'none', textAlign: 'right' },
+  timerSettingNote: { fontSize: 11, color: '#888', textAlign: 'center', marginTop: 4, fontStyle: 'italic' },
 };
 
 createRoot(document.getElementById('root')).render(e(App));
