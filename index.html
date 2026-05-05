@@ -1,0 +1,740 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="theme-color" content="#0e0e0e" />
+<title>鍛錬録</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' fill='%23c0392b'/%3E%3Ctext x='50' y='72' font-size='70' text-anchor='middle' fill='%23f4f0e6' font-family='serif' font-weight='700'%3E鍛%3C/text%3E%3C/svg%3E" />
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { background: #0e0e0e; color: #e8e3d8; font-family: 'Hiragino Mincho ProN', 'Yu Mincho', serif; font-size: 14px; line-height: 1.6; min-height: 100vh; }
+  input, select, textarea, button { font-family: inherit; }
+  input[type=number]::-webkit-outer-spin-button, input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+  input[type=number] { -moz-appearance: textfield; }
+  ::selection { background: #c0392b; color: #fff; }
+  button { cursor: pointer; }
+  .app { min-height: 100vh; }
+  .center { display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 20px; }
+</style>
+</head>
+<body>
+<div id="root" class="app"><div class="center"><div style="color:#666">読み込み中…</div></div></div>
+
+<script type="importmap">
+{
+  "imports": {
+    "react": "https://esm.sh/react@18.2.0",
+    "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
+    "firebase/app": "https://www.gstatic.com/firebasejs/10.13.2/firebase-app.js",
+    "firebase/auth": "https://www.gstatic.com/firebasejs/10.13.2/firebase-auth.js",
+    "firebase/firestore": "https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore.js"
+  }
+}
+</script>
+
+<script type="module">
+import React, { useState, useEffect, useMemo, createContext, useContext } from 'react';
+import { createRoot } from 'react-dom/client';
+import { initializeApp } from 'firebase/app';
+import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from 'firebase/auth';
+import { getFirestore, doc, setDoc, getDoc, collection, getDocs } from 'firebase/firestore';
+
+// ================= ここにFirebaseの設定情報を貼り付けてください =================
+const firebaseConfig = {
+  apiKey: "AIzaSyDbd-Rgs5aEake1b9VgEPUZXWfw7uRBwjU",
+  authDomain: "tanrenroku.firebaseapp.com",
+  projectId: "tanrenroku",
+  storageBucket: "tanrenroku.firebasestorage.app",
+  messagingSenderId: "933814511282",
+  appId: "1:933814511282:web:1c0678cdcb7439c4450bab",
+  measurementId: "G-0FXJ22K8KB"
+};
+// =====================================================================
+
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+
+const PARTS = {
+  chest:    { jp: '胸',   color: '#c0392b', name: 'Chest' },
+  back:     { jp: '背中', color: '#2c5f8d', name: 'Back' },
+  legs:     { jp: '脚',   color: '#3d7a4f', name: 'Legs' },
+  shoulder: { jp: '肩',   color: '#c97a2b', name: 'Shoulder' },
+  arms:     { jp: '腕',   color: '#7a4f9c', name: 'Arms' },
+};
+const DAY_TO_PART = { 1: 'chest', 2: 'back', 3: 'legs', 4: 'shoulder', 5: 'arms' };
+const DAY_LABELS = ['日', '月', '火', '水', '木', '金', '土'];
+const MENU = {
+  chest: [
+    { name: 'インクラインダンベルプレス', sets: 3, reps: '8〜10' },
+    { name: 'フラットダンベルプレス', sets: 3, reps: '10〜12' },
+    { name: 'ダンベルフライ', sets: 3, reps: '12〜15' },
+  ],
+  back: [
+    { name: 'ワンハンドダンベルロウ', sets: 3, reps: '8〜10' },
+    { name: 'ルーマニアンデッドリフト', sets: 3, reps: '10' },
+    { name: 'チェストサポートロウ', sets: 3, reps: '10〜12' },
+  ],
+  legs: [
+    { name: 'ゴブレットスクワット', sets: 3, reps: '10〜12' },
+    { name: 'ブルガリアンスクワット', sets: 3, reps: '10' },
+    { name: 'カーフレイズ', sets: 3, reps: '15〜20' },
+  ],
+  shoulder: [
+    { name: 'シーテッドショルダープレス', sets: 3, reps: '8〜10' },
+    { name: 'サイドレイズ', sets: 3, reps: '12〜15' },
+    { name: 'リアレイズ', sets: 3, reps: '12〜15' },
+  ],
+  arms: [
+    { name: 'インクラインダンベルカール', sets: 3, reps: '10〜12' },
+    { name: 'トライセプスエクステンション', sets: 3, reps: '10〜12' },
+    { name: 'ハンマーカール', sets: 3, reps: '12' },
+  ],
+};
+
+const ymd = (d) => {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+};
+const parseYMD = (s) => { const [y,m,d] = s.split('-').map(Number); return new Date(y,m-1,d); };
+const todayKey = () => ymd(new Date());
+
+const computeStreak = (log) => {
+  let streak = 0;
+  const d = new Date();
+  for (let i = 0; i < 365; i++) {
+    const dow = d.getDay();
+    const key = ymd(d);
+    if (dow === 0 || dow === 6) { d.setDate(d.getDate()-1); continue; }
+    const entry = log[key];
+    const hasData = entry && entry.sets && entry.sets.some((s) => s.weight || s.reps);
+    if (hasData) { streak++; d.setDate(d.getDate()-1); }
+    else { if (i === 0) { d.setDate(d.getDate()-1); continue; } break; }
+  }
+  return streak;
+};
+
+function App() {
+  const [user, setUser] = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [log, setLog] = useState({});
+  const [logLoading, setLogLoading] = useState(false);
+  const [view, setView] = useState('today');
+  const [selectedDate, setSelectedDate] = useState(todayKey());
+  const [detail, setDetail] = useState(null);
+  const [saveStatus, setSaveStatus] = useState(''); // '' | 'saving' | 'saved' | 'error'
+
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, (u) => {
+      setUser(u);
+      setAuthLoading(false);
+    });
+    return unsub;
+  }, []);
+
+  useEffect(() => {
+    if (!user) { setLog({}); return; }
+    setLogLoading(true);
+    (async () => {
+      try {
+        const snap = await getDocs(collection(db, 'users', user.uid, 'sessions'));
+        const data = {};
+        snap.forEach((d) => { data[d.id] = d.data(); });
+        setLog(data);
+      } catch (e) {
+        console.error('load failed', e);
+      } finally {
+        setLogLoading(false);
+      }
+    })();
+  }, [user]);
+
+  const updateEntry = async (dateKey, partial) => {
+    setLog((prev) => ({ ...prev, [dateKey]: { ...(prev[dateKey] || {}), ...partial } }));
+    if (!user) return;
+    setSaveStatus('saving');
+    try {
+      const merged = { ...(log[dateKey] || {}), ...partial };
+      await setDoc(doc(db, 'users', user.uid, 'sessions', dateKey), merged);
+      setSaveStatus('saved');
+      setTimeout(() => setSaveStatus(''), 1500);
+    } catch (e) {
+      console.error('save failed', e);
+      setSaveStatus('error');
+    }
+  };
+
+  const handleLogin = async () => {
+    try {
+      await signInWithPopup(auth, new GoogleAuthProvider());
+    } catch (e) {
+      console.error('login failed', e);
+      alert('ログインに失敗しました: ' + e.message);
+    }
+  };
+  const handleLogout = async () => { await signOut(auth); };
+
+  const streak = useMemo(() => computeStreak(log), [log]);
+
+  if (authLoading) return e('div', { style: styles.center }, e('div', { style: { color: '#666', fontSize: 13 } }, '読み込み中…'));
+  if (!user) return e(LoginScreen, { onLogin: handleLogin });
+  if (logLoading) return e('div', { style: styles.center }, e('div', { style: { color: '#666', fontSize: 13 } }, 'データを読み込み中…'));
+
+  return e('div', null,
+    e(Header, { view, setView, streak, log, user, onLogout: handleLogout, saveStatus }),
+    e('main', { style: styles.main },
+      view === 'today' && e(TodayView, { selectedDate, setSelectedDate, log, updateEntry }),
+      view === 'heatmap' && e(HeatmapView, { log, onSelectDay: setDetail }),
+      view === 'progress' && e(ProgressView, { log })
+    ),
+    detail && e(DayModal, { dateKey: detail, log, onClose: () => setDetail(null) })
+  );
+}
+
+const e = React.createElement;
+
+function LoginScreen({ onLogin }) {
+  return e('div', { style: styles.center },
+    e('div', { style: { textAlign: 'center', maxWidth: 320 } },
+      e('div', { style: styles.brandSealLarge }, '鍛'),
+      e('div', { style: { fontSize: 22, fontWeight: 700, letterSpacing: '0.2em', color: '#f4f0e6', marginTop: 24 } }, '鍛錬録'),
+      e('div', { style: { fontFamily: 'monospace', fontSize: 10, letterSpacing: '0.2em', color: '#666', marginTop: 4 } }, 'TANREN-ROKU'),
+      e('div', { style: { fontSize: 13, color: '#888', marginTop: 32, lineHeight: 1.8 } }, 'Googleアカウントでログインして、', e('br'), 'トレーニングの記録を始めましょう。'),
+      e('button', { onClick: onLogin, style: styles.loginBtn }, 'Googleでログイン')
+    )
+  );
+}
+
+function Header({ view, setView, streak, log, user, onLogout, saveStatus }) {
+  const exportCSV = () => {
+    const rows = [['date','part','exercise','set','weight_kg','reps','rpe','note']];
+    Object.keys(log).sort().forEach((date) => {
+      const entry = log[date];
+      if (!entry || !entry.sets) return;
+      entry.sets.forEach((s, i) => {
+        rows.push([date, entry.part || '', s.exercise || '', s.setIndex ?? i+1, s.weight ?? '', s.reps ?? '', s.rpe ?? '', (entry.note || '').replace(/\n/g,' ')]);
+      });
+    });
+    const csv = rows.map((r) => r.map((c) => `"${String(c).replace(/"/g,'""')}"`).join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `tanrenroku_${todayKey()}.csv`; a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  return e('header', { style: styles.header },
+    e('div', { style: styles.brandMark },
+      e('div', { style: styles.brandSeal }, '鍛'),
+      e('div', null,
+        e('div', { style: styles.brandTitle }, '鍛錬録'),
+        e('div', { style: styles.brandSub }, 'TANREN-ROKU')
+      )
+    ),
+    e('div', { style: styles.headerRight },
+      saveStatus && e('div', { style: { ...styles.saveStatus, color: saveStatus === 'error' ? '#c0392b' : saveStatus === 'saving' ? '#888' : '#3d7a4f' } },
+        saveStatus === 'saving' ? '保存中…' : saveStatus === 'saved' ? '✓ 保存済' : '保存失敗'
+      ),
+      e('div', { style: styles.streak },
+        e('span', { style: { ...styles.streakNum, color: streak > 0 ? '#e8a04a' : '#666' } }, streak),
+        e('span', { style: styles.streakLabel }, '日連続')
+      ),
+      e('nav', { style: styles.nav },
+        ...[['today','本日'],['heatmap','記録'],['progress','推移']].map(([k,l]) =>
+          e('button', { key: k, onClick: () => setView(k), style: { ...styles.navBtn, ...(view === k ? styles.navBtnActive : {}) } }, l)
+        )
+      ),
+      e('button', { onClick: exportCSV, style: styles.csvBtn, title: 'CSVエクスポート' }, 'CSV'),
+      e('button', { onClick: onLogout, style: styles.csvBtn, title: 'ログアウト' }, '退出')
+    )
+  );
+}
+
+function TodayView({ selectedDate, setSelectedDate, log, updateEntry }) {
+  const date = parseYMD(selectedDate);
+  const dow = date.getDay();
+  const isRest = dow === 0 || dow === 6;
+  const partKey = DAY_TO_PART[dow];
+  const part = partKey ? PARTS[partKey] : null;
+  const exercises = partKey ? MENU[partKey] : [];
+  const entry = log[selectedDate] || { part: partKey, sets: [], note: '' };
+
+  const setsByEx = useMemo(() => {
+    const map = {};
+    exercises.forEach((ex) => (map[ex.name] = []));
+    (entry.sets || []).forEach((s) => {
+      if (!map[s.exercise]) map[s.exercise] = [];
+      map[s.exercise].push(s);
+    });
+    return map;
+  }, [entry.sets, exercises]);
+
+  const lastSession = useMemo(() => {
+    const dates = Object.keys(log).filter((k) => k < selectedDate && log[k]?.part === partKey && log[k]?.sets?.length).sort().reverse();
+    return dates[0] ? { date: dates[0], data: log[dates[0]] } : null;
+  }, [log, selectedDate, partKey]);
+
+  const updateSet = (exercise, setIdx, field, value) => {
+    const sets = [...(entry.sets || [])];
+    let target = sets.findIndex((s) => s.exercise === exercise && s.setIndex === setIdx);
+    if (target === -1) { sets.push({ exercise, setIndex: setIdx, weight: '', reps: '', rpe: '' }); target = sets.length - 1; }
+    sets[target] = { ...sets[target], [field]: value };
+    updateEntry(selectedDate, { part: partKey, sets, note: entry.note || '' });
+  };
+
+  const navDate = (delta) => { const d = parseYMD(selectedDate); d.setDate(d.getDate() + delta); setSelectedDate(ymd(d)); };
+
+  return e('div', { style: styles.todayWrap },
+    e('div', { style: styles.dateBar },
+      e('button', { onClick: () => navDate(-1), style: styles.iconBtn }, '‹'),
+      e('div', { style: styles.dateLabel },
+        e('div', { style: styles.dateMain }, selectedDate.replace(/-/g, '.')),
+        e('div', { style: styles.dateSub }, `${DAY_LABELS[dow]}曜日 ${part ? '· ' + part.jp : '· 休息日'}`)
+      ),
+      e('button', { onClick: () => navDate(1), style: styles.iconBtn }, '›')
+    ),
+    isRest
+      ? e('div', { style: styles.restCard },
+          e('div', { style: styles.restMark }, '休'),
+          e('div', { style: styles.restText }, '本日は休息日です'),
+          e('div', { style: styles.restSub }, '回復もトレーニングのうち')
+        )
+      : e(React.Fragment, null,
+          e('div', { style: { ...styles.partBanner, borderLeftColor: part.color } },
+            e('div', { style: { ...styles.partKanji, color: part.color } }, part.jp),
+            e('div', null,
+              e('div', { style: styles.partName }, part.name.toUpperCase() + ' DAY'),
+              e('div', { style: styles.partExCount }, exercises.length + ' 種目')
+            )
+          ),
+          ...exercises.map((ex) =>
+            e(ExerciseBlock, { key: ex.name, exercise: ex, sets: setsByEx[ex.name] || [], partColor: part.color, lastSession, onUpdate: (setIdx, field, value) => updateSet(ex.name, setIdx, field, value) })
+          ),
+          e('div', { style: styles.noteBlock },
+            e('div', { style: styles.noteLabel }, '所見・覚書'),
+            e('textarea', {
+              style: styles.noteTextarea,
+              value: entry.note || '',
+              onChange: (ev) => updateEntry(selectedDate, { part: partKey, sets: entry.sets || [], note: ev.target.value }),
+              placeholder: '体調、フォームの気づき、次回の課題など'
+            })
+          )
+        )
+  );
+}
+
+function ExerciseBlock({ exercise, sets, partColor, lastSession, onUpdate }) {
+  const lastSets = lastSession?.data?.sets?.filter((s) => s.exercise === exercise.name) || [];
+  const lastBest = lastSets.reduce((max, s) => { const w = parseFloat(s.weight); return !isNaN(w) && w > max ? w : max; }, 0);
+
+  return e('div', { style: styles.exBlock },
+    e('div', { style: styles.exHeader },
+      e('div', null,
+        e('div', { style: styles.exName }, exercise.name),
+        e('div', { style: styles.exTarget }, `目標 · ${exercise.sets} sets × ${exercise.reps} reps`)
+      ),
+      lastBest > 0 && e('div', { style: styles.lastBest },
+        e('div', { style: styles.lastBestLabel }, '前回最重量'),
+        e('div', { style: { ...styles.lastBestVal, color: partColor } }, lastBest, e('span', { style: styles.lastBestUnit }, 'kg'))
+      )
+    ),
+    e('div', { style: styles.setHeaderRow },
+      e('div', { style: styles.setHeaderCell }, 'SET'),
+      e('div', { style: styles.setHeaderCell }, '重量(kg)'),
+      e('div', { style: styles.setHeaderCell }, '回数'),
+      e('div', { style: styles.setHeaderCell }, 'RPE')
+    ),
+    ...Array.from({ length: exercise.sets }, (_, i) => {
+      const setIdx = i + 1;
+      const s = sets.find((x) => x.setIndex === setIdx) || {};
+      const lastSet = lastSets.find((x) => x.setIndex === setIdx);
+      return e('div', { key: setIdx, style: styles.setRow },
+        e('div', null, e('span', { style: { ...styles.setBadge, background: partColor } }, setIdx)),
+        e('input', { type: 'number', inputMode: 'decimal', step: '0.5', value: s.weight || '', onChange: (ev) => onUpdate(setIdx, 'weight', ev.target.value), placeholder: lastSet?.weight ? `↩ ${lastSet.weight}` : '—', style: styles.numInput }),
+        e('input', { type: 'number', inputMode: 'numeric', value: s.reps || '', onChange: (ev) => onUpdate(setIdx, 'reps', ev.target.value), placeholder: lastSet?.reps ? `↩ ${lastSet.reps}` : '—', style: styles.numInput }),
+        e('select', { value: s.rpe || '', onChange: (ev) => onUpdate(setIdx, 'rpe', ev.target.value), style: styles.rpeSelect },
+          e('option', { value: '' }, '—'),
+          ...[6,7,7.5,8,8.5,9,9.5,10].map((v) => e('option', { key: v, value: v }, v))
+        )
+      );
+    })
+  );
+}
+
+function HeatmapView({ log, onSelectDay }) {
+  const today = new Date();
+  const [year, setYear] = useState(today.getFullYear());
+  const grid = useMemo(() => buildYearGrid(year), [year]);
+
+  return e('div', { style: styles.heatWrap },
+    e('div', { style: styles.heatHeader },
+      e('button', { onClick: () => setYear(year-1), style: styles.iconBtn }, '‹'),
+      e('div', { style: styles.yearLabel }, year),
+      e('button', { onClick: () => setYear(year+1), style: styles.iconBtn }, '›')
+    ),
+    e('div', { style: styles.legend },
+      ...Object.entries(PARTS).map(([k,p]) =>
+        e('div', { key: k, style: styles.legendItem },
+          e('span', { style: { ...styles.legendDot, background: p.color } }),
+          e('span', { style: styles.legendText }, p.jp)
+        )
+      ),
+      e('div', { style: styles.legendItem },
+        e('span', { style: { ...styles.legendDot, background: '#2a2a2a', border: '1px solid #444' } }),
+        e('span', { style: styles.legendText }, '未記録')
+      ),
+      e('div', { style: styles.legendItem },
+        e('span', { style: { ...styles.legendDot, background: '#1a1a1a', border: '1px dashed #333' } }),
+        e('span', { style: styles.legendText }, '休息日')
+      )
+    ),
+    e('div', { style: styles.heatScroll },
+      e('div', { style: styles.heatGrid },
+        e('div', { style: styles.dayLabels },
+          e('div', { style: styles.dayLabel }, '月'),
+          e('div', { style: { ...styles.dayLabel, marginTop: 16 } }, '水'),
+          e('div', { style: { ...styles.dayLabel, marginTop: 16 } }, '金')
+        ),
+        e('div', { style: { flex: 1 } },
+          e('div', { style: styles.monthLabelsRow },
+            ...grid.monthLabels.map((m, i) => e('div', { key: i, style: { ...styles.monthLabel, gridColumn: `${m.col + 1} / span 1` } }, m.label))
+          ),
+          e('div', { style: styles.weeks },
+            ...grid.weeks.map((week, wi) =>
+              e('div', { key: wi, style: styles.week },
+                ...week.map((cell, di) => {
+                  if (!cell) return e('div', { key: di, style: styles.cellEmpty });
+                  const entry = log[cell.key];
+                  const dow2 = cell.dow;
+                  const isRestCell = dow2 === 0 || dow2 === 6;
+                  const isFuture = cell.date > today;
+                  const hasData = entry?.sets?.some((s) => s.weight || s.reps);
+                  const partKey = entry?.part || DAY_TO_PART[dow2];
+                  const part = partKey ? PARTS[partKey] : null;
+                  let bg = '#2a2a2a', border = '1px solid #3a3a3a';
+                  if (isFuture) { bg = '#1a1a1a'; border = '1px solid #252525'; }
+                  else if (isRestCell) { bg = '#1a1a1a'; border = '1px dashed #333'; }
+                  else if (hasData && part) { bg = part.color; border = `1px solid ${part.color}`; }
+                  return e('div', {
+                    key: di,
+                    onClick: () => !isFuture && onSelectDay(cell.key),
+                    title: `${cell.key}${part ? ' · ' + part.jp : ''}${hasData ? ' ✓' : ''}`,
+                    style: { ...styles.cell, background: bg, border, cursor: isFuture ? 'default' : 'pointer', opacity: isFuture ? 0.4 : 1 }
+                  });
+                })
+              )
+            )
+          )
+        )
+      )
+    ),
+    e(YearStats, { log, year })
+  );
+}
+
+function YearStats({ log, year }) {
+  const stats = useMemo(() => {
+    const counts = { chest:0, back:0, legs:0, shoulder:0, arms:0 };
+    let totalSets = 0, totalVolume = 0;
+    Object.keys(log).forEach((k) => {
+      if (!k.startsWith(`${year}-`)) return;
+      const ent = log[k]; if (!ent?.sets?.length) return;
+      const hasData = ent.sets.some((s) => s.weight || s.reps); if (!hasData) return;
+      if (ent.part && counts[ent.part] !== undefined) counts[ent.part]++;
+      ent.sets.forEach((s) => { const w = parseFloat(s.weight), r = parseFloat(s.reps); if (!isNaN(w) && !isNaN(r)) { totalSets++; totalVolume += w*r; } });
+    });
+    const totalDays = Object.values(counts).reduce((a,b) => a+b, 0);
+    return { counts, totalDays, totalSets, totalVolume };
+  }, [log, year]);
+
+  const stat = (label, value, unit) => e('div', { style: styles.statBlock },
+    e('div', { style: styles.statLabel }, label),
+    e('div', { style: styles.statValRow }, e('span', { style: styles.statVal }, value), e('span', { style: styles.statUnit }, unit))
+  );
+
+  return e('div', { style: styles.yearStats },
+    stat('トレーニング日数', stats.totalDays, '日'),
+    stat('総セット数', stats.totalSets, 'set'),
+    stat('総ボリューム', (stats.totalVolume/1000).toFixed(1), 't'),
+    e('div', { style: styles.partBreakdown },
+      ...Object.entries(PARTS).map(([k,p]) =>
+        e('div', { key: k, style: styles.breakItem },
+          e('span', { style: { ...styles.breakDot, background: p.color } }),
+          e('span', { style: styles.breakLabel }, p.jp),
+          e('span', { style: styles.breakVal }, stats.counts[k])
+        )
+      )
+    )
+  );
+}
+
+function buildYearGrid(year) {
+  const start = new Date(year, 0, 1);
+  const end = new Date(year, 11, 31);
+  const firstMonday = new Date(start);
+  const startDow = start.getDay();
+  const offset = startDow === 0 ? -6 : 1 - startDow;
+  firstMonday.setDate(firstMonday.getDate() + offset);
+  const weeks = [], monthLabels = [];
+  let lastMonth = -1, cursor = new Date(firstMonday), weekIdx = 0;
+  while (cursor <= end || cursor.getFullYear() === year) {
+    const week = [];
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(cursor);
+      if (d.getFullYear() === year) {
+        week.push({ date: d, key: ymd(d), dow: d.getDay() });
+        if (i === 0 && d.getMonth() !== lastMonth) {
+          monthLabels.push({ col: weekIdx, label: ['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月'][d.getMonth()] });
+          lastMonth = d.getMonth();
+        }
+      } else { week.push(null); }
+      cursor.setDate(cursor.getDate() + 1);
+    }
+    weeks.push(week); weekIdx++;
+    if (cursor.getFullYear() > year) break;
+    if (weekIdx > 54) break;
+  }
+  return { weeks, monthLabels };
+}
+
+function DayModal({ dateKey, log, onClose }) {
+  const entry = log[dateKey];
+  const date = parseYMD(dateKey);
+  const dow = date.getDay();
+  const partKey = entry?.part || DAY_TO_PART[dow];
+  const part = partKey ? PARTS[partKey] : null;
+  const isRest = dow === 0 || dow === 6;
+  const grouped = useMemo(() => {
+    const map = {};
+    (entry?.sets || []).forEach((s) => { if (!map[s.exercise]) map[s.exercise] = []; map[s.exercise].push(s); });
+    return Object.entries(map).map(([exercise, sets]) => ({ exercise, sets: sets.sort((a,b) => a.setIndex - b.setIndex) }));
+  }, [entry]);
+
+  return e('div', { style: styles.modalBackdrop, onClick: onClose },
+    e('div', { style: styles.modal, onClick: (ev) => ev.stopPropagation() },
+      e('button', { style: styles.modalClose, onClick: onClose }, '×'),
+      e('div', { style: styles.modalDate }, dateKey.replace(/-/g, '.')),
+      e('div', { style: styles.modalSub }, `${DAY_LABELS[dow]}曜 ${part ? '· ' + part.jp + ' (' + part.name + ')' : '· 休息日'}`),
+      isRest && e('div', { style: styles.modalRest }, '休息日 — 記録なし'),
+      !isRest && grouped.length
+        ? e('div', { style: styles.modalSets },
+            ...grouped.map((g) =>
+              e('div', { key: g.exercise },
+                e('div', { style: { ...styles.modalExName, color: part?.color } }, g.exercise),
+                e('div', null,
+                  ...g.sets.map((s, i) =>
+                    e('div', { key: i, style: styles.modalSet },
+                      e('span', { style: styles.modalSetIdx }, '#' + s.setIndex),
+                      e('span', { style: styles.modalSetW }, s.weight || '—', e('span', { style: styles.kg }, 'kg')),
+                      e('span', { style: styles.modalSetX }, '×'),
+                      e('span', null, s.reps || '—'),
+                      s.rpe && e('span', { style: styles.modalSetRpe }, 'RPE ' + s.rpe)
+                    )
+                  )
+                )
+              )
+            ),
+            entry.note && e('div', { style: styles.modalNote },
+              e('div', { style: styles.modalNoteLabel }, '所見'),
+              e('div', { style: styles.modalNoteText }, entry.note)
+            )
+          )
+        : (!isRest && e('div', { style: styles.modalRest }, '記録なし'))
+    )
+  );
+}
+
+function ProgressView({ log }) {
+  const allExercises = useMemo(() => {
+    const set = new Set();
+    Object.values(log).forEach((entry) => { entry?.sets?.forEach((s) => s.exercise && set.add(s.exercise)); });
+    return Array.from(set);
+  }, [log]);
+  const [selected, setSelected] = useState('');
+  useEffect(() => { if (!selected && allExercises.length) setSelected(allExercises[0]); }, [allExercises, selected]);
+
+  const data = useMemo(() => {
+    if (!selected) return [];
+    const points = [];
+    Object.keys(log).sort().forEach((date) => {
+      const entry = log[date];
+      const exSets = entry?.sets?.filter((s) => s.exercise === selected) || [];
+      const validSets = exSets.filter((s) => parseFloat(s.weight) > 0 && parseFloat(s.reps) > 0);
+      if (!validSets.length) return;
+      const maxW = Math.max(...validSets.map((s) => parseFloat(s.weight)));
+      const volume = validSets.reduce((sum, s) => sum + parseFloat(s.weight) * parseFloat(s.reps), 0);
+      points.push({ date: date.slice(5), max: maxW, volume });
+    });
+    return points;
+  }, [log, selected]);
+
+  const partKey = useMemo(() => {
+    for (const [pk, exes] of Object.entries(MENU)) { if (exes.some((ex) => ex.name === selected)) return pk; }
+    return null;
+  }, [selected]);
+  const color = partKey ? PARTS[partKey].color : '#888';
+
+  if (!allExercises.length) return e('div', { style: styles.emptyProgress },
+    e('div', { style: styles.emptyText }, '記録がまだありません'),
+    e('div', { style: styles.emptySub }, '「本日」タブから記録を始めると、ここに推移が表示されます')
+  );
+
+  return e('div', { style: styles.progressWrap },
+    e('div', null,
+      e('div', { style: styles.exSelectLabel }, '種目'),
+      e('select', { value: selected, onChange: (ev) => setSelected(ev.target.value), style: styles.exSelectInput },
+        ...allExercises.map((ex) => e('option', { key: ex, value: ex }, ex))
+      )
+    ),
+    data.length
+      ? e(React.Fragment, null,
+          e(SimpleLineChart, { title: '最大重量の推移', data, field: 'max', color }),
+          e(SimpleLineChart, { title: '総ボリューム', data, field: 'volume', color, dashed: true })
+        )
+      : e('div', { style: styles.emptyProgress }, e('div', { style: styles.emptyText }, 'この種目の記録はまだありません'))
+  );
+}
+
+function SimpleLineChart({ title, data, field, color, dashed }) {
+  const W = 600, H = 200, P = 36;
+  const values = data.map((d) => d[field]);
+  const maxV = Math.max(...values, 1);
+  const minV = Math.min(...values, 0);
+  const range = maxV - minV || 1;
+  const points = data.map((d, i) => {
+    const x = data.length > 1 ? P + (i / (data.length - 1)) * (W - 2*P) : W/2;
+    const y = H - P - ((d[field] - minV) / range) * (H - 2*P);
+    return { x, y, raw: d };
+  });
+  const path = points.map((p, i) => (i === 0 ? `M ${p.x} ${p.y}` : `L ${p.x} ${p.y}`)).join(' ');
+
+  return e('div', { style: styles.chartCard },
+    e('div', { style: styles.chartLabel }, title),
+    e('svg', { viewBox: `0 0 ${W} ${H}`, style: { width: '100%', height: 'auto' } },
+      e('line', { x1: P, y1: H-P, x2: W-P, y2: H-P, stroke: '#2a2a2a', strokeWidth: '0.5' }),
+      e('line', { x1: P, y1: P, x2: P, y2: H-P, stroke: '#2a2a2a', strokeWidth: '0.5' }),
+      e('text', { x: P-6, y: P+4, fontSize: '11', fill: '#666', fontFamily: 'monospace', textAnchor: 'end' }, Math.round(maxV)),
+      e('text', { x: P-6, y: H-P+3, fontSize: '11', fill: '#666', fontFamily: 'monospace', textAnchor: 'end' }, Math.round(minV)),
+      e('path', { d: path, fill: 'none', stroke: color, strokeWidth: '2', strokeDasharray: dashed ? '4 3' : '0' }),
+      ...points.map((p, i) => e('circle', { key: i, cx: p.x, cy: p.y, r: '3', fill: color })),
+      ...(points.length <= 14 ? points.map((p, i) =>
+        e('text', { key: 'l'+i, x: p.x, y: H-P+16, fontSize: '10', fill: '#666', fontFamily: 'monospace', textAnchor: 'middle' }, p.raw.date)
+      ) : [])
+    )
+  );
+}
+
+const styles = {
+  center: { display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', padding: 20 },
+  brandSealLarge: { width: 80, height: 80, background: '#c0392b', color: '#f4f0e6', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 48, fontWeight: 700, boxShadow: '0 0 0 1px #2a1812 inset, 4px 4px 0 #1a0a08', transform: 'rotate(-2deg)', borderRadius: 4, fontFamily: 'serif' },
+  loginBtn: { marginTop: 32, padding: '12px 28px', fontSize: 14, background: '#1a1a1a', border: '1px solid #2a2a2a', color: '#f4f0e6', borderRadius: 2, letterSpacing: '0.1em' },
+  header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '14px 20px', borderBottom: '1px solid #1f1f1f', flexWrap: 'wrap', gap: 12, background: 'linear-gradient(180deg, #131210 0%, #0e0e0e 100%)' },
+  brandMark: { display: 'flex', alignItems: 'center', gap: 12 },
+  brandSeal: { width: 36, height: 36, background: '#c0392b', color: '#f4f0e6', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20, fontWeight: 700, boxShadow: '0 0 0 1px #2a1812 inset, 2px 2px 0 #1a0a08', transform: 'rotate(-2deg)', borderRadius: 2 },
+  brandTitle: { fontSize: 17, fontWeight: 700, letterSpacing: '0.15em', color: '#f4f0e6' },
+  brandSub: { fontFamily: 'monospace', fontSize: 9, letterSpacing: '0.15em', color: '#666', marginTop: 1 },
+  headerRight: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
+  saveStatus: { fontSize: 11, fontFamily: 'monospace', letterSpacing: '0.1em' },
+  streak: { display: 'flex', alignItems: 'center', gap: 6, padding: '6px 11px', background: '#1a1612', border: '1px solid #2a2218', borderRadius: 2 },
+  streakNum: { fontFamily: 'monospace', fontSize: 15, fontWeight: 700 },
+  streakLabel: { fontSize: 11, color: '#888', letterSpacing: '0.1em' },
+  nav: { display: 'flex', gap: 2, background: '#1a1a1a', padding: 3, borderRadius: 2 },
+  navBtn: { background: 'transparent', color: '#888', border: 'none', padding: '6px 14px', fontSize: 13, letterSpacing: '0.15em', borderRadius: 2 },
+  navBtnActive: { background: '#2a1f1a', color: '#f4f0e6' },
+  csvBtn: { background: '#1a1a1a', border: '1px solid #2a2a2a', color: '#aaa', padding: '6px 12px', fontSize: 11, borderRadius: 2, fontFamily: 'monospace', letterSpacing: '0.1em' },
+  iconBtn: { background: '#1a1a1a', border: '1px solid #2a2a2a', color: '#aaa', width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 2, fontSize: 18, lineHeight: 1 },
+  main: { maxWidth: 920, margin: '0 auto', padding: '20px 16px 60px' },
+  todayWrap: { display: 'flex', flexDirection: 'column', gap: 16 },
+  dateBar: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '4px 0' },
+  dateLabel: { textAlign: 'center', flex: 1 },
+  dateMain: { fontFamily: 'monospace', fontSize: 20, fontWeight: 500, color: '#f4f0e6', letterSpacing: '0.05em' },
+  dateSub: { fontSize: 12, color: '#888', marginTop: 2, letterSpacing: '0.1em' },
+  partBanner: { display: 'flex', alignItems: 'center', gap: 16, padding: '12px 16px', background: '#15110f', borderLeft: '3px solid', borderRadius: 2 },
+  partKanji: { fontSize: 34, fontWeight: 700, lineHeight: 1 },
+  partName: { fontFamily: 'monospace', fontSize: 11, color: '#888', letterSpacing: '0.2em' },
+  partExCount: { fontSize: 12, color: '#aaa', marginTop: 2 },
+  exBlock: { background: '#141414', border: '1px solid #1f1f1f', borderRadius: 2, padding: '14px 16px' },
+  exHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, marginBottom: 12, paddingBottom: 10, borderBottom: '1px solid #1f1f1f' },
+  exName: { fontSize: 15, fontWeight: 500, color: '#f4f0e6' },
+  exTarget: { fontFamily: 'monospace', fontSize: 11, color: '#666', marginTop: 3 },
+  lastBest: { textAlign: 'right', flexShrink: 0 },
+  lastBestLabel: { fontFamily: 'monospace', fontSize: 9, color: '#666', letterSpacing: '0.15em' },
+  lastBestVal: { fontFamily: 'monospace', fontSize: 17, fontWeight: 700, marginTop: 2 },
+  lastBestUnit: { fontSize: 11, color: '#888', marginLeft: 2 },
+  setHeaderRow: { display: 'grid', gridTemplateColumns: '32px 1fr 1fr 60px', gap: 8, marginBottom: 4 },
+  setHeaderCell: { fontFamily: 'monospace', fontSize: 9, color: '#666', letterSpacing: '0.15em' },
+  setRow: { display: 'grid', gridTemplateColumns: '32px 1fr 1fr 60px', gap: 8, alignItems: 'center', marginTop: 6 },
+  setBadge: { fontFamily: 'monospace', fontSize: 10, fontWeight: 700, color: '#fff', width: 22, height: 22, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '50%' },
+  numInput: { background: '#0e0e0e', border: '1px solid #2a2a2a', color: '#f4f0e6', padding: '7px 9px', fontSize: 13, fontFamily: 'monospace', fontWeight: 500, width: '100%', borderRadius: 2, outline: 'none' },
+  rpeSelect: { background: '#0e0e0e', border: '1px solid #2a2a2a', color: '#aaa', padding: '7px 4px', fontSize: 12, fontFamily: 'monospace', width: '100%', borderRadius: 2, outline: 'none' },
+  noteBlock: { display: 'flex', flexDirection: 'column', gap: 6 },
+  noteLabel: { fontSize: 10, color: '#666', letterSpacing: '0.2em', fontFamily: 'monospace' },
+  noteTextarea: { background: '#141414', border: '1px solid #1f1f1f', color: '#e8e3d8', padding: '10px 12px', fontSize: 13, fontFamily: 'inherit', minHeight: 60, resize: 'vertical', borderRadius: 2, outline: 'none', lineHeight: 1.7, width: '100%' },
+  restCard: { background: '#141414', border: '1px dashed #2a2a2a', padding: '50px 20px', textAlign: 'center', borderRadius: 2 },
+  restMark: { fontSize: 60, color: '#3a3a3a', fontWeight: 700, lineHeight: 1 },
+  restText: { fontSize: 14, color: '#888', marginTop: 14, letterSpacing: '0.15em' },
+  restSub: { fontSize: 11, color: '#555', marginTop: 6, fontStyle: 'italic' },
+  heatWrap: { display: 'flex', flexDirection: 'column', gap: 16 },
+  heatHeader: { display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 16 },
+  yearLabel: { fontFamily: 'monospace', fontSize: 22, fontWeight: 700, color: '#f4f0e6', letterSpacing: '0.1em', minWidth: 80, textAlign: 'center' },
+  legend: { display: 'flex', gap: 12, flexWrap: 'wrap', padding: '10px 12px', background: '#141414', borderRadius: 2, border: '1px solid #1f1f1f' },
+  legendItem: { display: 'flex', alignItems: 'center', gap: 5 },
+  legendDot: { width: 11, height: 11, borderRadius: 1 },
+  legendText: { fontSize: 11, color: '#aaa' },
+  heatScroll: { overflowX: 'auto', background: '#0e0e0e', border: '1px solid #1f1f1f', padding: 14, borderRadius: 2 },
+  heatGrid: { display: 'flex', gap: 6, minWidth: 800 },
+  dayLabels: { display: 'flex', flexDirection: 'column', paddingTop: 22, fontFamily: 'monospace', fontSize: 9, color: '#555' },
+  dayLabel: { height: 11 },
+  monthLabelsRow: { display: 'grid', gridTemplateColumns: 'repeat(54, 1fr)', gap: 3, height: 16, fontFamily: 'monospace', fontSize: 9, color: '#666', marginBottom: 4 },
+  monthLabel: { whiteSpace: 'nowrap' },
+  weeks: { display: 'flex', gap: 3 },
+  week: { display: 'flex', flexDirection: 'column', gap: 3 },
+  cell: { width: 11, height: 11, borderRadius: 1 },
+  cellEmpty: { width: 11, height: 11 },
+  yearStats: { display: 'flex', gap: 12, flexWrap: 'wrap', padding: 14, background: '#141414', border: '1px solid #1f1f1f', borderRadius: 2 },
+  statBlock: { flex: '1 1 130px', minWidth: 120 },
+  statLabel: { fontFamily: 'monospace', fontSize: 9, color: '#666', letterSpacing: '0.2em', marginBottom: 4 },
+  statValRow: { display: 'flex', alignItems: 'baseline', gap: 4 },
+  statVal: { fontFamily: 'monospace', fontSize: 22, fontWeight: 700, color: '#f4f0e6' },
+  statUnit: { fontSize: 11, color: '#888' },
+  partBreakdown: { flex: '1 1 100%', display: 'flex', gap: 12, flexWrap: 'wrap', paddingTop: 12, borderTop: '1px solid #1f1f1f', marginTop: 4 },
+  breakItem: { display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 },
+  breakDot: { width: 8, height: 8, borderRadius: '50%' },
+  breakLabel: { color: '#aaa' },
+  breakVal: { fontFamily: 'monospace', color: '#f4f0e6', fontWeight: 700 },
+  modalBackdrop: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16, zIndex: 1000 },
+  modal: { background: '#141414', border: '1px solid #2a2a2a', padding: '24px 22px 20px', maxWidth: 440, width: '100%', maxHeight: '85vh', overflow: 'auto', position: 'relative', borderRadius: 2 },
+  modalClose: { position: 'absolute', top: 10, right: 10, background: 'transparent', border: 'none', color: '#888', fontSize: 20, padding: 4 },
+  modalDate: { fontFamily: 'monospace', fontSize: 18, fontWeight: 500, color: '#f4f0e6', letterSpacing: '0.05em' },
+  modalSub: { fontSize: 12, color: '#888', marginTop: 4, marginBottom: 16, letterSpacing: '0.1em' },
+  modalRest: { color: '#666', fontStyle: 'italic', fontSize: 13, padding: '16px 0', textAlign: 'center' },
+  modalSets: { display: 'flex', flexDirection: 'column', gap: 12 },
+  modalExName: { fontSize: 14, fontWeight: 500, marginBottom: 6, paddingBottom: 5, borderBottom: '1px solid #1f1f1f' },
+  modalSet: { display: 'flex', alignItems: 'baseline', gap: 10, fontFamily: 'monospace', fontSize: 13, color: '#e8e3d8', marginTop: 3 },
+  modalSetIdx: { color: '#666', fontSize: 11, minWidth: 22 },
+  modalSetW: { fontWeight: 700 },
+  kg: { fontSize: 10, color: '#888', marginLeft: 1 },
+  modalSetX: { color: '#444' },
+  modalSetRpe: { fontSize: 10, color: '#888', marginLeft: 'auto', background: '#1a1a1a', padding: '1px 6px', borderRadius: 2 },
+  modalNote: { marginTop: 6, paddingTop: 12, borderTop: '1px solid #1f1f1f' },
+  modalNoteLabel: { fontFamily: 'monospace', fontSize: 9, color: '#666', letterSpacing: '0.2em', marginBottom: 5 },
+  modalNoteText: { fontSize: 13, color: '#aaa', lineHeight: 1.7 },
+  progressWrap: { display: 'flex', flexDirection: 'column', gap: 14 },
+  exSelectLabel: { fontFamily: 'monospace', fontSize: 9, color: '#666', letterSpacing: '0.2em', marginBottom: 6 },
+  exSelectInput: { background: '#141414', border: '1px solid #2a2a2a', color: '#f4f0e6', padding: '8px 12px', fontSize: 13, fontFamily: 'inherit', width: '100%', borderRadius: 2, outline: 'none' },
+  chartCard: { background: '#141414', border: '1px solid #1f1f1f', padding: 14, borderRadius: 2 },
+  chartLabel: { fontFamily: 'monospace', fontSize: 10, color: '#888', letterSpacing: '0.2em', marginBottom: 10 },
+  emptyProgress: { padding: '50px 20px', textAlign: 'center', background: '#141414', border: '1px dashed #2a2a2a', borderRadius: 2, color: '#888' },
+  emptyText: { fontSize: 14, color: '#aaa', letterSpacing: '0.1em', marginBottom: 6 },
+  emptySub: { fontSize: 12, color: '#666' },
+};
+
+createRoot(document.getElementById('root')).render(e(App));
+</script>
+</body>
+</html>
